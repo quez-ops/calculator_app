@@ -1,121 +1,250 @@
 import 'package:flutter/material.dart';
 
 void main() {
-  runApp(const MyApp());
+  runApp(const CalculatorApp());
 }
 
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+/// Root widget configuring the application theme and top-level settings.
+class CalculatorApp extends StatelessWidget {
+  const CalculatorApp({super.key});
 
-  // This widget is the root of your application.
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Flutter Demo',
-      theme: ThemeData(
-        // This is the theme of your application.
-        //
-        // TRY THIS: Try running your application with "flutter run". You'll see
-        // the application has a purple toolbar. Then, without quitting the app,
-        // try changing the seedColor in the colorScheme below to Colors.green
-        // and then invoke "hot reload" (save your changes or press the "hot
-        // reload" button in a Flutter-supported IDE, or press "r" if you used
-        // the command line to start the app).
-        //
-        // Notice that the counter didn't reset back to zero; the application
-        // state is not lost during the reload. To reset the state, use hot
-        // restart instead.
-        //
-        // This works for code too, not just values: Most code changes can be
-        // tested with just a hot reload.
-        colorScheme: .fromSeed(seedColor: Colors.deepPurple),
+      title: 'Calculator State Lab',
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData.dark().copyWith(
+        scaffoldBackgroundColor: const Color(0xFF1E1E1E),
       ),
-      home: const MyHomePage(title: 'Flutter Demo Home Page'),
+      home: const CalculatorScreen(),
     );
   }
 }
 
-class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key, required this.title});
-
-  // This widget is the home page of your application. It is stateful, meaning
-  // that it has a State object (defined below) that contains fields that affect
-  // how it looks.
-
-  // This class is the configuration for the state. It holds the values (in this
-  // case the title) provided by the parent (in this case the App widget) and
-  // used by the build method of the State. Fields in a Widget subclass are
-  // always marked "final".
-
-  final String title;
+/// Main stateful widget managing user interactions and calculator state.
+class CalculatorScreen extends StatefulWidget {
+  const CalculatorScreen({super.key});
 
   @override
-  State<MyHomePage> createState() => _MyHomePageState();
+  State<CalculatorScreen> createState() => _CalculatorScreenState();
 }
 
-class _MyHomePageState extends State<MyHomePage> {
-  int _counter = 0;
+class _CalculatorScreenState extends State<CalculatorScreen> {
+  // Authoritative State Variables
+  double? _accumulator;           // Stores the ongoing evaluated total
+  String? _pendingOperator;       // Active operation waiting for the second operand
+  String _currentInput = '0';     // Current value displayed and edited on screen
+  bool _awaitingNextOperand = false; // True when next digit should replace current display
+  bool _isError = false;          // Tracks error states like division by zero
 
-  void _incrementCounter() {
+  /// Appends or initiates digit entry into the current operand.
+  void _onDigit(String digit) {
+    // Tapping a digit after an error starts fresh
+    if (_isError) _reset();
+
     setState(() {
-      // This call to setState tells the Flutter framework that something has
-      // changed in this State, which causes it to rerun the build method below
-      // so that the display can reflect the updated values. If we changed
-      // _counter without calling setState(), then the build method would not be
-      // called again, and so nothing would appear to happen.
-      _counter++;
+      if (_awaitingNextOperand) {
+        // Starts the next operand instead of appending to the prior number
+        _currentInput = digit;
+        _awaitingNextOperand = false;
+      } else {
+        // Prevent leading redundant zeros
+        _currentInput = (_currentInput == '0') ? digit : _currentInput + digit;
+      }
     });
+  }
+
+  /// Handles arithmetic operators (+, −, ×, ÷) using left-to-right chaining.
+  void _onOperator(String op) {
+    if (_isError) return;
+
+    setState(() {
+      double currentVal = double.tryParse(_currentInput) ?? 0.0;
+
+      // Operator replacement rule: '9 + ×' replaces '+' with '×'
+      if (_awaitingNextOperand && _pendingOperator != null) {
+        _pendingOperator = op;
+        return;
+      }
+
+      // If this is the first operator, seed the accumulator;
+      // otherwise, evaluate the pending operation immediately (left-to-right rule).
+      if (_accumulator == null) {
+        _accumulator = currentVal;
+      } else if (_pendingOperator != null) {
+        _compute(currentVal);
+      }
+
+      _pendingOperator = op;
+      _awaitingNextOperand = true;
+    });
+  }
+
+  /// Evaluates pending operations without conventional algebraic precedence.
+  void _compute(double secondOperand) {
+    if (_pendingOperator == null || _accumulator == null) return;
+    double first = _accumulator!;
+
+    switch (_pendingOperator) {
+      case '+':
+        _accumulator = first + secondOperand;
+        break;
+      case '−':
+        _accumulator = first - secondOperand;
+        break;
+      case '×':
+        _accumulator = first * secondOperand;
+        break;
+      case '÷':
+        // Feature 03: Recoverable division-by-zero error handling
+        if (secondOperand == 0) {
+          _isError = true;
+          _currentInput = 'Error: Div by 0';
+          _accumulator = null;
+          _pendingOperator = null;
+          return;
+        }
+        _accumulator = first / secondOperand;
+        break;
+    }
+    _currentInput = _formatNumber(_accumulator!);
+  }
+
+  /// Completes the calculation when equals is pressed.
+  void _onEquals() {
+    if (_isError || _accumulator == null || _pendingOperator == null) return;
+
+    // Per assignment contract: ignore equals if no new operand was provided
+    if (_awaitingNextOperand) return;
+
+    setState(() {
+      double currentVal = double.tryParse(_currentInput) ?? 0.0;
+      _compute(currentVal);
+      _pendingOperator = null;
+      _awaitingNextOperand = true; // Next digit entry starts a fresh calculation
+    });
+  }
+
+  /// Feature 06: Positive / Negative toggle (±).
+  void _onToggleSign() {
+    if (_isError || _currentInput == '0') return;
+
+    setState(() {
+      if (_currentInput.startsWith('-')) {
+        _currentInput = _currentInput.substring(1);
+      } else {
+        _currentInput = '-$_currentInput';
+      }
+
+      // Update accumulator if we're currently displaying a running result
+      if (_awaitingNextOperand) {
+        _accumulator = double.tryParse(_currentInput);
+      }
+    });
+  }
+
+  /// Feature 02: Clear / All Clear (AC) resets all state to default.
+  void _reset() {
+    setState(() {
+      _accumulator = null;
+      _pendingOperator = null;
+      _currentInput = '0';
+      _awaitingNextOperand = false;
+      _isError = false;
+    });
+  }
+
+  /// Cleans up trailing decimal zeros for cleaner integer displays.
+  String _formatNumber(double val) {
+    if (val == val.toInt().toDouble()) {
+      return val.toInt().toString();
+    }
+    return val.toString();
+  }
+
+  /// Helper to build consistent, touch-friendly grid buttons.
+  Widget _buildBtn(String label, {Color? bg, VoidCallback? onTap}) {
+    return Expanded(
+      child: Padding(
+        padding: const EdgeInsets.all(6.0),
+        child: ElevatedButton(
+          style: ElevatedButton.styleFrom(
+            backgroundColor: bg ?? const Color(0xFF333333),
+            padding: const EdgeInsets.symmetric(vertical: 20),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+          ),
+          onPressed: onTap,
+          child: Text(
+            label,
+            style: const TextStyle(fontSize: 22, color: Colors.white),
+          ),
+        ),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    // This method is rerun every time setState is called, for instance as done
-    // by the _incrementCounter method above.
-    //
-    // The Flutter framework has been optimized to make rerunning build methods
-    // fast, so that you can just rebuild anything that needs updating rather
-    // than having to individually change instances of widgets.
     return Scaffold(
       appBar: AppBar(
-        // TRY THIS: Try changing the color here to a specific color (to
-        // Colors.amber, perhaps?) and trigger a hot reload to see the AppBar
-        // change color while the other colors stay the same.
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        // Here we take the value from the MyHomePage object that was created by
-        // the App.build method, and use it to set our appbar title.
-        title: Text(widget.title),
+        title: const Text('Calculator State Lab'),
+        centerTitle: true,
       ),
-      body: Center(
-        // Center is a layout widget. It takes a single child and positions it
-        // in the middle of the parent.
+      body: SafeArea(
         child: Column(
-          // Column is also a layout widget. It takes a list of children and
-          // arranges them vertically. By default, it sizes itself to fit its
-          // children horizontally, and tries to be as tall as its parent.
-          //
-          // Column has various properties to control how it sizes itself and
-          // how it positions its children. Here we use mainAxisAlignment to
-          // center the children vertically; the main axis here is the vertical
-          // axis because Columns are vertical (the cross axis would be
-          // horizontal).
-          //
-          // TRY THIS: Invoke "debug painting" (choose the "Toggle Debug Paint"
-          // action in the IDE, or press "p" in the console), to see the
-          // wireframe for each widget.
-          mainAxisAlignment: .center,
           children: [
-            const Text('You have pushed the button this many times:'),
-            Text(
-              '$_counter',
-              style: Theme.of(context).textTheme.headlineMedium,
+            // Display area with Semantics for accessibility screen readers
+            Expanded(
+              child: Container(
+                alignment: Alignment.bottomRight,
+                padding: const EdgeInsets.all(24),
+                child: Semantics(
+                  liveRegion: true,
+                  child: Text(
+                    _currentInput,
+                    style: TextStyle(
+                      fontSize: 48,
+                      fontWeight: FontWeight.bold,
+                      color: _isError ? Colors.redAccent : Colors.white,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ),
             ),
+            // Keypad Grid
+            Row(children: [
+              _buildBtn('AC', bg: Colors.red[800], onTap: _reset),
+              _buildBtn('±', bg: Colors.grey[700], onTap: _onToggleSign),
+              _buildBtn('÷', bg: Colors.amber[800], onTap: () => _onOperator('÷')),
+            ]),
+            Row(children: [
+              _buildBtn('7', onTap: () => _onDigit('7')),
+              _buildBtn('8', onTap: () => _onDigit('8')),
+              _buildBtn('9', onTap: () => _onDigit('9')),
+              _buildBtn('×', bg: Colors.amber[800], onTap: () => _onOperator('×')),
+            ]),
+            Row(children: [
+              _buildBtn('4', onTap: () => _onDigit('4')),
+              _buildBtn('5', onTap: () => _onDigit('5')),
+              _buildBtn('6', onTap: () => _onDigit('6')),
+              _buildBtn('−', bg: Colors.amber[800], onTap: () => _onOperator('−')),
+            ]),
+            Row(children: [
+              _buildBtn('1', onTap: () => _onDigit('1')),
+              _buildBtn('2', onTap: () => _onDigit('2')),
+              _buildBtn('3', onTap: () => _onDigit('3')),
+              _buildBtn('+', bg: Colors.amber[800], onTap: () => _onOperator('+')),
+            ]),
+            Row(children: [
+              _buildBtn('0', onTap: () => _onDigit('0')),
+              _buildBtn('=', bg: Colors.green[700], onTap: _onEquals),
+            ]),
           ],
         ),
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
-        child: const Icon(Icons.add),
       ),
     );
   }
